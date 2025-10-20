@@ -1,72 +1,72 @@
-# step2_distance_matrix.py
+# step2_distance_matrix.py (labeled)
 import pandas as pd
 import requests
 
-INPUT = "outlook_export_geocoded.xlsx"   # Adım 1’in çıktısı
+INPUT = "outlook_export_geocoded.xlsx"
 OUT_XLSX = "step2_route_report.xlsx"
-OSRM = "https://router.project-osrm.org"  # public OSRM
+OSRM = "https://router.project-osrm.org"
 
 def osrm_table(coords):
-    # coords: [(lat,lon), ...]
-    if len(coords) < 2:
-        return [[0]], [[0]]
     coord_str = ";".join([f"{lon},{lat}" for lat,lon in coords])
     url = f"{OSRM}/table/v1/driving/{coord_str}?annotations=duration,distance"
-    r = requests.get(url, timeout=30)
-    r.raise_for_status()
+    r = requests.get(url, timeout=30); r.raise_for_status()
     js = r.json()
-    dur_min = [[round((d or 0)/60, 1) for d in row] for row in js["durations"]]   # sec -> min
-    dist_km = [[round((d or 0)/1000, 2) for d in row] for row in js["distances"]] # m -> km
+    dur_min = [[round((d or 0)/60, 1) for d in row] for row in js["durations"]]
+    dist_km = [[round((d or 0)/1000, 2) for d in row] for row in js["distances"]]
     return dur_min, dist_km
 
 def nearest_neighbor(dist, start=0):
-    n = len(dist)
-    un = set(range(n)); un.remove(start)
-    route = [start]
+    n=len(dist); un=set(range(n)); un.remove(start); route=[start]
     while un:
-        last = route[-1]
-        nxt = min(un, key=lambda j: dist[last][j])
+        last=route[-1]
+        nxt=min(un, key=lambda j: dist[last][j])
         route.append(nxt); un.remove(nxt)
     return route
 
 def two_opt(route, dist):
     def length(rt): return sum(dist[rt[i]][rt[i+1]] for i in range(len(rt)-1))
-    best = route[:]; best_len = length(best); improved = True
+    best=route[:]; best_len=length(best); improved=True
     while improved:
-        improved = False
+        improved=False
         for i in range(1, len(best)-2):
             for k in range(i+1, len(best)-1):
-                new = best[:i] + best[i:k+1][::-1] + best[k+1:]
-                nl = length(new)
+                new=best[:i]+best[i:k+1][::-1]+best[k+1:]
+                nl=length(new)
                 if nl < best_len - 1e-6:
-                    best, best_len = new, nl; improved = True
+                    best, best_len=new, nl; improved=True
     return best
 
 def main():
     df = pd.read_excel(INPUT)
-    if not {"Latitude","Longitude"}.issubset(df.columns):
-        raise SystemExit("Latitude/Longitude yok. Önce step1_geocode.py çalıştırın.")
+    need = {"Location","Latitude","Longitude"}
+    if not need.issubset(df.columns):
+        raise SystemExit(f"Eksik kolonlar: {need - set(df.columns)}")
 
-    # Sırayı takvimdeki gibi koruyoruz
+    # Takvim sırası korunur
     visits = df[df["Latitude"].notna() & df["Longitude"].notna()].reset_index(drop=True)
-    coords = list(zip(visits["Latitude"], visits["Longitude"]))
-    if len(coords) < 2:
-        raise SystemExit("En az 2 koordinat gerekli.")
 
-    # OSRM matrisleri
+    # Etiketler (kısa ve anlaşılır)
+    def short_label(loc):
+        s = str(loc).split(",")[0].strip()
+        return s[:35]  # çok uzun olmasın
+    labels = [f"{i+1}. {short_label(v)}" for i, v in enumerate(visits["Location"])]
+
+    coords = list(zip(visits["Latitude"], visits["Longitude"]))
     dur, dist = osrm_table(coords)
 
-    # Planlanan sıranın toplamları
+    # Planlanan ve optimal
     plan_min = sum(dur[i][i+1] for i in range(len(dur)-1))
     plan_km  = sum(dist[i][i+1] for i in range(len(dist)-1))
 
-    # Optimal rota (NN + 2-opt)
     init = nearest_neighbor(dist, start=0)
-    opt = two_opt(init, dist)
+    opt  = two_opt(init, dist)
     opt_min = sum(dur[opt[i]][opt[i+1]] for i in range(len(opt)-1))
     opt_km  = sum(dist[opt[i]][opt[i+1]] for i in range(len(opt)-1))
 
-    # Rapor tabloları
+    # Etiketli DataFrame'ler
+    df_dur  = pd.DataFrame(dur,  index=labels, columns=labels)
+    df_dist = pd.DataFrame(dist, index=labels, columns=labels)
+
     visits_out = visits.copy()
     visits_out.insert(0, "planned_order", range(1, len(visits)+1))
     visits_out.insert(1, "optimal_order", [opt.index(i)+1 for i in range(len(visits))])
@@ -80,14 +80,24 @@ def main():
         "time_saving_pct": round(100*(plan_min - opt_min)/plan_min,1) if plan_min>0 else 0.0
     }])
 
-    # Excel’e yaz
+    # İnsan-okur “route” sayfası
+    planned_route = [labels[i] for i in range(len(labels))]
+    optimal_route = [labels[i] for i in opt]
+    route_df = pd.DataFrame({
+        "planned_order": list(range(1, len(planned_route)+1)),
+        "planned_label": planned_route,
+        "optimal_order": list(range(1, len(optimal_route)+1)),
+        "optimal_label": optimal_route,
+    })
+
     with pd.ExcelWriter(OUT_XLSX, engine="xlsxwriter") as w:
-        pd.DataFrame(dur).to_excel(w, index=False, header=False, sheet_name="durations_min")
-        pd.DataFrame(dist).to_excel(w, index=False, header=False, sheet_name="distances_km")
+        df_dur.to_excel(w, sheet_name="durations_min")
+        df_dist.to_excel(w, sheet_name="distances_km")
         visits_out.to_excel(w, index=False, sheet_name="visits")
+        route_df.to_excel(w, index=False, sheet_name="route")
         kpis.to_excel(w, index=False, sheet_name="kpis")
 
-    print(f"✅ Rapor hazır: {OUT_XLSX}")
+    print(f"✅ Etiketli rapor hazır: {OUT_XLSX}")
 
 if __name__ == "__main__":
     main()
