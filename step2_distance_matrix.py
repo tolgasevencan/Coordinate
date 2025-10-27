@@ -3,16 +3,15 @@ import argparse, pandas as pd, requests
 from pathlib import Path
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--infile", required=True, help="Eingabedatei (Excel mit Koordinaten)")
-ap.add_argument("--outfile", help="Optionaler Ausgabepfad")
+ap.add_argument("--infile", required=True)           # <base>_geocoded.xlsx
+ap.add_argument("--outfile")
 args = ap.parse_args()
 
 df = pd.read_excel(args.infile).dropna(subset=["Breitengrad","Längengrad"])
 labels=[f"{i+1}. {str(x).split(',')[0][:35]}" for i,x in enumerate(df["Ort"])]
 coords=list(zip(df["Breitengrad"], df["Längengrad"]))
 
-print(f"🧭 Berechne Distanzmatrix für {len(coords)} Standorte...")
-
+print(f"🧭 Berechne Distanz-/Dauermatrix für {len(coords)} Standorte...")
 coord_str=";".join([f"{lon},{lat}" for lat,lon in coords])
 js=requests.get(f"https://router.project-osrm.org/table/v1/driving/{coord_str}?annotations=duration,distance",timeout=30).json()
 dur=[[round((d or 0)/60,1) for d in row] for row in js["durations"]]
@@ -67,5 +66,3 @@ with pd.ExcelWriter(outfile, engine="xlsxwriter") as w:
     kpis.to_excel(w, index=False, sheet_name="KPIs")
 
 print(f"✅ Routenanalyse abgeschlossen: {outfile}")
-print(f"⏱️ Geplante Dauer: {plan_min:.1f} Min → Optimiert: {opt_min:.1f} Min")
-print(f"📉 Ersparnis: {round(plan_min-opt_min,1)} Min ({round(100*(plan_min-opt_min)/plan_min,1) if plan_min>0 else 0} %)")
