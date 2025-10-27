@@ -3,13 +3,15 @@ import argparse, pandas as pd, requests
 from pathlib import Path
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--infile", required=True)
-ap.add_argument("--outfile")
+ap.add_argument("--infile", required=True, help="Eingabedatei (Excel mit Koordinaten)")
+ap.add_argument("--outfile", help="Optionaler Ausgabepfad")
 args = ap.parse_args()
 
-df = pd.read_excel(args.infile).dropna(subset=["Latitude","Longitude"])
-labels=[f"{i+1}. {str(x).split(',')[0][:35]}" for i,x in enumerate(df["Location"])]
-coords=list(zip(df["Latitude"], df["Longitude"]))
+df = pd.read_excel(args.infile).dropna(subset=["Breitengrad","Längengrad"])
+labels=[f"{i+1}. {str(x).split(',')[0][:35]}" for i,x in enumerate(df["Ort"])]
+coords=list(zip(df["Breitengrad"], df["Längengrad"]))
+
+print(f"🧭 Berechne Distanzmatrix für {len(coords)} Standorte...")
 
 coord_str=";".join([f"{lon},{lat}" for lat,lon in coords])
 js=requests.get(f"https://router.project-osrm.org/table/v1/driving/{coord_str}?annotations=duration,distance",timeout=30).json()
@@ -40,27 +42,30 @@ opt_km=sum(dist[opt[i]][opt[i+1]] for i in range(len(opt)-1))
 df_dur=pd.DataFrame(dur, index=labels, columns=labels)
 df_dist=pd.DataFrame(dist, index=labels, columns=labels)
 vis=df.copy()
-vis.insert(0,"planned_order", range(1,len(df)+1))
-vis.insert(1,"optimal_order", [opt.index(i)+1 for i in range(len(df))])
-route_df=pd.DataFrame({"planned_order":range(1,len(labels)+1),
-                       "planned_label":labels,
-                       "optimal_order":range(1,len(labels)+1),
-                       "optimal_label":[labels[i] for i in opt]})
+vis.insert(0,"Geplante Reihenfolge", range(1,len(df)+1))
+vis.insert(1,"Optimale Reihenfolge", [opt.index(i)+1 for i in range(len(df))])
+route_df=pd.DataFrame({"Geplante Reihenfolge":range(1,len(labels)+1),
+                       "Geplanter Standort":labels,
+                       "Optimale Reihenfolge":range(1,len(labels)+1),
+                       "Optimaler Standort":[labels[i] for i in opt]})
 kpis=pd.DataFrame([{
-    "planned_total_duration_min": round(plan_min,1),
-    "planned_total_distance_km": round(plan_km,2),
-    "optimal_total_duration_min": round(opt_min,1),
-    "optimal_total_distance_km": round(opt_km,2),
-    "time_saving_min": round(plan_min-opt_min,1),
-    "time_saving_pct": round(100*(plan_min-opt_min)/plan_min,1) if plan_min>0 else 0.0
+    "Geplante Gesamtdauer (Minuten)": round(plan_min,1),
+    "Geplante Distanz (km)": round(plan_km,2),
+    "Optimale Gesamtdauer (Minuten)": round(opt_min,1),
+    "Optimale Distanz (km)": round(opt_km,2),
+    "Ersparnis (Minuten)": round(plan_min-opt_min,1),
+    "Ersparnis (%)": round(100*(plan_min-opt_min)/plan_min,1) if plan_min>0 else 0.0
 }])
 
 base = Path(args.infile).name.replace("_geocoded.xlsx","")
 outfile = args.outfile or f"{base}_route_report.xlsx"
 with pd.ExcelWriter(outfile, engine="xlsxwriter") as w:
-    df_dur.to_excel(w, sheet_name="durations")
-    df_dist.to_excel(w, sheet_name="distances")
-    vis.to_excel(w, index=False, sheet_name="visits")
-    route_df.to_excel(w, index=False, sheet_name="route")
-    kpis.to_excel(w, index=False, sheet_name="kpis")
-print(f"✅ Rapor: {outfile}")
+    df_dur.to_excel(w, sheet_name="Dauer (Minuten)")
+    df_dist.to_excel(w, sheet_name="Distanz (km)")
+    vis.to_excel(w, index=False, sheet_name="Besuche")
+    route_df.to_excel(w, index=False, sheet_name="Route")
+    kpis.to_excel(w, index=False, sheet_name="KPIs")
+
+print(f"✅ Routenanalyse abgeschlossen: {outfile}")
+print(f"⏱️ Geplante Dauer: {plan_min:.1f} Min → Optimiert: {opt_min:.1f} Min")
+print(f"📉 Ersparnis: {round(plan_min-opt_min,1)} Min ({round(100*(plan_min-opt_min)/plan_min,1) if plan_min>0 else 0} %)")
