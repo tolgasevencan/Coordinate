@@ -1,31 +1,29 @@
-import pandas as pd
+# step1_geocode.py
+import argparse, time, pandas as pd
 from geopy.geocoders import Nominatim
-import time
+from pathlib import Path
 
-# 1. Excel dosyasını yükle
-df = pd.read_excel('outlook_export.xlsx')
+ap = argparse.ArgumentParser()
+ap.add_argument("--infile", required=True)
+ap.add_argument("--outfile")
+args = ap.parse_args()
 
-# 2. Geocoder başlat
+df = pd.read_excel(args.infile)
 geolocator = Nominatim(user_agent="route_optimizer")
+df["Latitude"] = None; df["Longitude"] = None
 
-# 3. Koordinatları saklamak için kolonlar
-df["Latitude"] = None
-df["Longitude"] = None
-
-# 4. Adresleri geocode et
-for i, row in df.iterrows():
-    address = row["Location"]
-    if pd.notna(address):
+for i, addr in df["Location"].fillna("").items():
+    if addr:
         try:
-            location = geolocator.geocode(address)
-            if location:
-                df.at[i, "Latitude"] = location.latitude
-                df.at[i, "Longitude"] = location.longitude
+            loc = geolocator.geocode(addr)
+            if loc:
+                df.at[i,"Latitude"]=loc.latitude
+                df.at[i,"Longitude"]=loc.longitude
         except Exception as e:
-            print(f"Hata: {address} -> {e}")
-        time.sleep(1)  # API kısıtlamalarına takılmamak için
+            print("Geocode hata:", addr, e)
+        time.sleep(1)
 
-# 5. Yeni dosyaya kaydet
-df.to_excel("outlook_export_geocoded.xlsx", index=False)
-
-print("✅ Geocoding işlemi tamamlandı! 'outlook_export_geocoded.xlsx' oluşturuldu.")
+base = Path(args.infile).name.replace("_export.xlsx","")
+outfile = args.outfile or f"{base}_geocoded.xlsx"
+df.to_excel(outfile, index=False)
+print(f"✅ Geocoded: {outfile}")
