@@ -1,0 +1,6 @@
+.venv/
+.streamlit/
+__pycache__/
+*.ics
+*.xlsx
+*.xls
