@@ -1,0 +1,4 @@
+[project]
+name = "route-app"
+version = "0.1.0"
+requires-python = ">=3.11,<3.12"
