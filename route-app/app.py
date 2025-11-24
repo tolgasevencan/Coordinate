@@ -8,17 +8,17 @@ from ics import Calendar
 from geopy.geocoders import Nominatim
 
 # ───────────────────────────────────────────────────────────────────────────────
-# BASICS
+# GRUNDEINSTELLUNGEN
 TZ = "Europe/Zurich"
 st.set_page_config(page_title="Aussendienst Analyse", page_icon="🚗")
 st.title("🚗 Aussendienst – ICS ➜ Excel ➜ Geokodierung ➜ Routenanalyse")
 
-# Nominatim kullanım şartı gereği: user_agent içinde iletişim bilgini yaz
+# Hinweis laut Nominatim-Nutzungsbedingungen: user_agent muss Kontaktinformation enthalten
 USER_AGENT = "aussendienst-route-optimizer (contact: you@example.com)"
 geocoder = Nominatim(user_agent=USER_AGENT, timeout=15)
 
 # ───────────────────────────────────────────────────────────────────────────────
-# HELPERS
+# HILFSFUNKTIONEN
 
 def parse_ics_to_df(ics_bytes: bytes) -> pd.DataFrame:
     cal = Calendar(ics_bytes.decode("utf-8", errors="ignore"))
@@ -56,14 +56,14 @@ def geocode_df(df: pd.DataFrame) -> pd.DataFrame:
                 out.at[i, "Längengrad"] = round(float(loc.longitude), 5)
         except Exception:
             pass
-        time.sleep(1)  # Nominatim nezaketi (rate limit)
+        time.sleep(1)  # Höflichkeit gegenüber Nominatim (Rate Limit)
     return out
 
 
 def osrm_table(coords):
-    """coords = [(lat, lon), ...]  →  minutes matrix, km matrix"""
+    """coords = [(lat, lon), ...]  →  Minutenmatrix, km-Matrix"""
     if len(coords) < 2:
-        return None, None, "Zu wenige Koordinaten für Matrix."
+        return None, None, "Zu wenige Koordinaten für die Matrix."
     coord_str = ";".join([f"{lon},{lat}" for lat, lon in coords])
     url = f"https://router.project-osrm.org/table/v1/driving/{coord_str}?annotations=duration,distance"
     try:
@@ -108,8 +108,8 @@ def label_for_row(row):
 
 
 def build_daywise_report(df_all: pd.DataFrame, base_name: str) -> bytes:
-    """Gün-gün Excel raporu (çoklu sheet) üretir, bytes döner."""
-    # tip: tarih alanı
+    """Erstellt einen tagesbasierten Excel-Report mit mehreren Sheets und gibt Bytes zurück."""
+    # Datumsspalte in korrektes Format bringen
     df_all = df_all.copy()
     df_all["Startdatum"] = pd.to_datetime(df_all["Startdatum"]).dt.date
     days = sorted(df_all["Startdatum"].dropna().unique().tolist())
@@ -121,7 +121,7 @@ def build_daywise_report(df_all: pd.DataFrame, base_name: str) -> bytes:
     with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
         for day in days:
             df = df_all[df_all["Startdatum"] == day].copy()
-            # planlanan sıraya göre saat
+            # Nach geplanter Startzeit sortieren
             df["__t"] = pd.to_datetime(df["Startzeit"], format="%H:%M:%S", errors="coerce")
             df = df.sort_values("__t").drop(columns="__t").reset_index(drop=True)
             df = df.dropna(subset=["Breitengrad","Längengrad"])
@@ -151,7 +151,7 @@ def build_daywise_report(df_all: pd.DataFrame, base_name: str) -> bytes:
                 df.to_excel(w, index=False, sheet_name=f"{day} Besuche")
                 continue
 
-            # TSP kaba+2-opt
+            # TSP-Heuristik (Nearest Neighbor + 2-Opt)
             init = nn(dist, start=0)
             opt = two_opt(init, dist)
 
@@ -162,7 +162,7 @@ def build_daywise_report(df_all: pd.DataFrame, base_name: str) -> bytes:
             save_min = round(plan_min - opt_min, 1)
             save_pct = round(100*save_min/plan_min, 1) if plan_min > 0 else 0.0
 
-            # görsel tablolar
+            # Visuelle Tabellen erstellen
             df_dur  = pd.DataFrame(dur,  index=labels, columns=labels)
             df_dist = pd.DataFrame(dist, index=labels, columns=labels)
 
@@ -203,7 +203,7 @@ def build_daywise_report(df_all: pd.DataFrame, base_name: str) -> bytes:
                 "Hinweis": ""
             })
 
-        # Gesamt-Übersicht + Hinweise
+        # Gesamtübersicht + Hinweise
         ueb = pd.DataFrame(overview_rows)
         if not ueb.empty:
             totals = pd.DataFrame([{
@@ -227,61 +227,4 @@ def build_daywise_report(df_all: pd.DataFrame, base_name: str) -> bytes:
     return buf.getvalue()
 
 # ───────────────────────────────────────────────────────────────────────────────
-# UI (3 Adım)
-
-tab1, tab2, tab3 = st.tabs(["ICS ➜ Excel", "Geokodierung (Excel)", "Routenanalyse & Report"])
-
-with tab1:
-    st.subheader("Schritt 1: ICS-Datei in Excel konvertieren")
-    up = st.file_uploader("ICS-Datei hochladen (z.B. 20250901-20250930_Name.ics)", type="ics")
-    if up:
-        df_ics = parse_ics_to_df(up.getvalue())
-        st.info(f"**Gesamt Ereigniszahl:** {len(df_ics)}")
-        st.dataframe(df_ics, use_container_width=True)
-        base_name = Path(up.name).stem
-        bio = io.BytesIO()
-        with pd.ExcelWriter(bio, engine="xlsxwriter") as w:
-            df_ics.to_excel(w, index=False, sheet_name="Termine")
-        bio.seek(0)
-        st.download_button("📥 Excel exportieren", bio, file_name=base_name+"_export.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-with tab2:
-    st.subheader("Schritt 2: Geokodierung (Excel ➜ Koordinaten)")
-    up2 = st.file_uploader("Excel mit Terminen (aus Schritt 1)", type=["xlsx"], key="geocode")
-    colA, colB = st.columns(2)
-    with colA:
-        st.caption("Nominatim-Hinweis: Bitte ein paar Sekunden Geduld (Rate-Limit)")
-    if up2:
-        df_in = pd.read_excel(up2)
-        need = {"Startdatum","Startzeit","Ort"}
-        miss = need - set(df_in.columns)
-        if miss:
-            st.error(f"Fehlende Spalten: {miss}")
-        else:
-            df_out = geocode_df(df_in)
-            st.dataframe(df_out.head(50), use_container_width=True)
-            base_name = Path(up2.name).stem.replace("_export", "")
-            bio = io.BytesIO()
-            with pd.ExcelWriter(bio, engine="xlsxwriter") as w:
-                df_out.to_excel(w, index=False, sheet_name="Termine_geocoded")
-            bio.seek(0)
-            st.download_button("📥 Geokodiertes Excel exportieren", bio,
-                               file_name=base_name+"_export_geocoded.xlsx",
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-with tab3:
-    st.subheader("Schritt 3: Tagesbasierte Routenanalyse & Report")
-    up3 = st.file_uploader("Geokodiertes Excel (aus Schritt 2)", type=["xlsx"], key="route")
-    if up3:
-        df_geo = pd.read_excel(up3)
-        need = {"Startdatum","Startzeit","Ort","Breitengrad","Längengrad"}
-        miss = need - set(df_geo.columns)
-        if miss:
-            st.error(f"Fehlende Spalten im geokodierten Excel: {miss}")
-        else:
-            st.write("**Hinweis:** Für jeden Tag werden fünf Sheets erzeugt: *Dauer*, *Distanz*, *Besuche*, *Route*, *KPIs*. Zusätzlich *Übersicht* und ggf. *Hinweise*.")
-            base_name = Path(up3.name).stem.replace("_export_geocoded", "")
-            build_daywise_report(df_geo, base_name)
-
-# Test
+# BENUTZEROBERFLÄCHE (3 Schritte)
